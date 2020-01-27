@@ -43,6 +43,15 @@ config IOSCHED_MAPLE
 	tristate "Maple I/O scheduler"
 	default y
 
+config IOSCHED_ANXIETY
+	tristate "Anxiety I/O scheduler"
+	default y
+	---help---
+		The Anxiety I/O scheduler prioritizes latency over everything
+		else. It uses a simple algorithm that selects from FIFO queues
+		implemented as doubly linked lists and prioritizes reads over
+		writes.
+
 choice
 	prompt "Default I/O scheduler"
 	default DEFAULT_CFQ
@@ -62,6 +71,10 @@ choice
 	config DEFAULT_MAPLE
 		bool "Maple" if IOSCHED_MAPLE=y
 
+	config DEFAULT_ANXIETY
+		bool "Anxiety" if IOSCHED_ANXIETY=y
+
+
 endchoice
 
 config DEFAULT_IOSCHED
@@ -70,6 +83,7 @@ config DEFAULT_IOSCHED
 	default "cfq" if DEFAULT_CFQ
 	default "noop" if DEFAULT_NOOP
 	default "maple" if DEFAULT_MAPLE
+	default "anxiety" if DEFAULT_ANXIETY
 
 endmenu
 
