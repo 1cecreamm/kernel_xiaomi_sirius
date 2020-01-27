@@ -53,9 +53,6 @@ uint8_t csr_wpa_oui[][CSR_WPA_OUI_SIZE] = {
 #endif /* FEATURE_WLAN_ESE */
 };
 
-#define FT_PSK_IDX   4
-#define FT_8021X_IDX 3
-
 /*
  * PLEASE DO NOT ADD THE #IFDEF IN BELOW TABLE,
  * IF STILL REQUIRE THEN PLEASE ADD NULL ENTRIES
@@ -2761,8 +2758,6 @@ bool csr_is_auth_type11r(tpAniSirGlobal mac, eCsrAuthType auth_type,
 	case eCSR_AUTH_TYPE_FT_RSN:
 	case eCSR_AUTH_TYPE_FT_SAE:
 	case eCSR_AUTH_TYPE_FT_SUITEB_EAP_SHA384:
-	case eCSR_AUTH_TYPE_FT_FILS_SHA256:
-	case eCSR_AUTH_TYPE_FT_FILS_SHA384:
 		return true;
 	default:
 		break;
@@ -3194,28 +3189,10 @@ static bool csr_is_auth_wpa_sae(tpAniSirGlobal mac,
 	bool is_sae_auth;
 
 	is_sae_auth = (csr_is_oui_match(mac, all_suites, suite_count,
-					csr_rsn_oui[ENUM_SAE], oui));
+					csr_rsn_oui[ENUM_SAE], oui) ||
+		       csr_is_oui_match(mac, all_suites, suite_count,
+					csr_rsn_oui[ENUM_FT_SAE], oui));
 	return is_sae_auth;
-}
-
-/*
- * csr_is_auth_ft_sae() - check whether oui is SAE
- * @mac: Global MAC context
- * @all_suites: pointer to all supported akm suites
- * @suite_count: all supported akm suites count
- * @oui: Oui needs to be matched
- *
- * Return: True if OUI is FT-SAE, false otherwise
- */
-static bool csr_is_auth_ft_sae(tpAniSirGlobal mac,
-			       uint8_t all_suites[][CSR_RSN_OUI_SIZE],
-			       uint8_t suite_count, uint8_t oui[])
-{
-	bool is_ft_sae_auth;
-
-	is_ft_sae_auth = csr_is_oui_match(mac, all_suites, suite_count,
-					  csr_rsn_oui[ENUM_FT_SAE], oui);
-	return is_ft_sae_auth;
 }
 #endif
 
@@ -3372,8 +3349,7 @@ static void csr_is_fils_auth(tpAniSirGlobal mac_ctx,
 
 #ifdef WLAN_FEATURE_SAE
 /**
- * csr_check_sae_auth() - update negotiated auth and oui if matches to SAE auth
- * type
+ * csr_check_sae_auth() - update negotiated auth if matches to SAE auth type
  * @mac_ctx: pointer to mac context
  * @authsuites: auth suites
  * @c_auth_suites: auth suites count
@@ -3384,27 +3360,18 @@ static void csr_is_fils_auth(tpAniSirGlobal mac_ctx,
  *
  * Return: None
  */
-static void
-csr_check_sae_auth(tpAniSirGlobal mac_ctx,
-		   uint8_t authsuites[][CSR_RSN_OUI_SIZE],
-		   uint8_t c_auth_suites,
-		   uint8_t authentication[], tCsrAuthList *auth_type,
-		   uint8_t index, eCsrAuthType *neg_authtype)
+static void csr_check_sae_auth(tpAniSirGlobal mac_ctx,
+	uint8_t authsuites[][CSR_RSN_OUI_SIZE], uint8_t c_auth_suites,
+	uint8_t authentication[], tCsrAuthList *auth_type,
+	uint8_t index, eCsrAuthType *neg_authtype)
 {
 	if ((*neg_authtype == eCSR_AUTH_TYPE_UNKNOWN) &&
-	    csr_is_auth_ft_sae(mac_ctx, authsuites, c_auth_suites,
-			       authentication)) {
-		if (eCSR_AUTH_TYPE_FT_SAE == auth_type->authType[index])
-			*neg_authtype = eCSR_AUTH_TYPE_FT_SAE;
-		else if (eCSR_AUTH_TYPE_OPEN_SYSTEM == auth_type->authType[index])
-			*neg_authtype = eCSR_AUTH_TYPE_OPEN_SYSTEM;
-	}
-
-	if ((*neg_authtype == eCSR_AUTH_TYPE_UNKNOWN) &&
-	    csr_is_auth_wpa_sae(mac_ctx, authsuites,
-				c_auth_suites, authentication)) {
+	   csr_is_auth_wpa_sae(mac_ctx, authsuites,
+	   c_auth_suites, authentication)) {
 		if (eCSR_AUTH_TYPE_SAE == auth_type->authType[index])
 			*neg_authtype = eCSR_AUTH_TYPE_SAE;
+		else if (eCSR_AUTH_TYPE_FT_SAE == auth_type->authType[index])
+			*neg_authtype = eCSR_AUTH_TYPE_FT_SAE;
 		else if (eCSR_AUTH_TYPE_OPEN_SYSTEM == auth_type->authType[index])
 			*neg_authtype = eCSR_AUTH_TYPE_OPEN_SYSTEM;
 	}
@@ -3434,7 +3401,6 @@ static void csr_check_sae_auth(tpAniSirGlobal mac_ctx,
  * @negotiated_mccipher: negotiated multicast cipher
  * @gp_mgmt_cipher: group management cipher
  * @mgmt_encryption_type: group management encryption type
- * @adaptive_11r: is adaptive 11r connection
  *
  * This routine will get all RSN information
  *
@@ -3450,8 +3416,7 @@ static bool csr_get_rsn_information(tpAniSirGlobal mac_ctx,
 				    eCsrAuthType *negotiated_authtype,
 				    eCsrEncryptionType *negotiated_mccipher,
 				    uint8_t *gp_mgmt_cipher,
-				    tAniEdType *mgmt_encryption_type,
-				    bool adaptive_11r)
+				    tAniEdType *mgmt_encryption_type)
 {
 	bool acceptable_cipher = false;
 	bool group_mgmt_acceptable_cipher = false;
@@ -3571,78 +3536,29 @@ static bool csr_get_rsn_information(tpAniSirGlobal mac_ctx,
 				neg_authtype = eCSR_AUTH_TYPE_CCKM_RSN;
 		}
 #endif
-		if (neg_authtype == eCSR_AUTH_TYPE_UNKNOWN &&
-		    csr_is_auth_rsn(mac_ctx, authsuites,
-				    c_auth_suites, authentication)) {
-			/*
-			 * For adaptive 11r connection send FT-802.1X akm in
-			 * association request
-			 */
-			if (adaptive_11r &&
-			    eCSR_AUTH_TYPE_FT_RSN == auth_type->authType[i]) {
-				neg_authtype = eCSR_AUTH_TYPE_FT_RSN;
-				qdf_mem_copy(authentication,
-					     csr_rsn_oui[FT_8021X_IDX],
-					     CSR_WPA_OUI_SIZE);
-			}
-
+		if ((neg_authtype == eCSR_AUTH_TYPE_UNKNOWN)
+				&& csr_is_auth_rsn(mac_ctx, authsuites,
+					c_auth_suites, authentication)) {
 			if (eCSR_AUTH_TYPE_RSN == auth_type->authType[i])
 				neg_authtype = eCSR_AUTH_TYPE_RSN;
 		}
-		if (neg_authtype == eCSR_AUTH_TYPE_UNKNOWN &&
-		    csr_is_auth_rsn_psk(mac_ctx, authsuites,
+		if ((neg_authtype == eCSR_AUTH_TYPE_UNKNOWN)
+				&& csr_is_auth_rsn_psk(mac_ctx, authsuites,
 					c_auth_suites, authentication)) {
-			/*
-			 * For adaptive 11r connection send FT-PSK akm in
-			 * association request
-			 */
-			if (adaptive_11r &&
-			    eCSR_AUTH_TYPE_FT_RSN_PSK == auth_type->authType[i]) {
-				neg_authtype = eCSR_AUTH_TYPE_FT_RSN_PSK;
-				qdf_mem_copy(authentication,
-					     csr_rsn_oui[FT_PSK_IDX],
-					     CSR_WPA_OUI_SIZE);
-			}
-
 			if (eCSR_AUTH_TYPE_RSN_PSK == auth_type->authType[i])
 				neg_authtype = eCSR_AUTH_TYPE_RSN_PSK;
 		}
 #ifdef WLAN_FEATURE_11W
-		if (neg_authtype == eCSR_AUTH_TYPE_UNKNOWN &&
-		    csr_is_auth_rsn_psk_sha256(mac_ctx, authsuites,
-					       c_auth_suites, authentication)) {
-			/*
-			 * For adaptive 11r connection send AP advertises only
-			 * PSK AKM. STA can choose FT-PSK akm in association
-			 * request if FT capable.
-			 */
-			if (adaptive_11r &&
-			    eCSR_AUTH_TYPE_FT_RSN_PSK == auth_type->authType[i]) {
-				neg_authtype = eCSR_AUTH_TYPE_FT_RSN_PSK;
-				qdf_mem_copy(authentication,
-					     csr_rsn_oui[FT_PSK_IDX],
-					     CSR_WPA_OUI_SIZE);
-			}
-
+		if ((neg_authtype == eCSR_AUTH_TYPE_UNKNOWN)
+			&& csr_is_auth_rsn_psk_sha256(mac_ctx, authsuites,
+					c_auth_suites, authentication)) {
 			if (eCSR_AUTH_TYPE_RSN_PSK_SHA256 ==
 					auth_type->authType[i])
 				neg_authtype = eCSR_AUTH_TYPE_RSN_PSK_SHA256;
 		}
 		if ((neg_authtype == eCSR_AUTH_TYPE_UNKNOWN) &&
-		    csr_is_auth_rsn8021x_sha256(mac_ctx,
-						authsuites, c_auth_suites,
-						authentication)) {
-			/*
-			 * For adaptive 11r connection send FT-802.1x akm in
-			 * association request
-			 */
-			if (adaptive_11r &&
-			    eCSR_AUTH_TYPE_FT_RSN == auth_type->authType[i]) {
-				neg_authtype = eCSR_AUTH_TYPE_FT_RSN;
-				qdf_mem_copy(authentication,
-					     csr_rsn_oui[FT_8021X_IDX],
-					     CSR_WPA_OUI_SIZE);
-			}
+				csr_is_auth_rsn8021x_sha256(mac_ctx, authsuites,
+					c_auth_suites, authentication)) {
 			if (eCSR_AUTH_TYPE_RSN_8021X_SHA256 ==
 					auth_type->authType[i])
 				neg_authtype = eCSR_AUTH_TYPE_RSN_8021X_SHA256;
@@ -3827,10 +3743,10 @@ static bool csr_is_rsn_match(tpAniSirGlobal mac_ctx, tCsrAuthList *pAuthType,
 	 * settings in the profile.
 	 */
 	fRSNMatch = csr_get_rsn_information(mac_ctx, pAuthType, enType,
-					    pEnMcType, &pIes->RSN, NULL, NULL,
-					    NULL, NULL, pNegotiatedAuthType,
-					    pNegotiatedMCCipher, NULL, NULL,
-					    false);
+					pEnMcType, &pIes->RSN,
+					NULL, NULL, NULL, NULL,
+					pNegotiatedAuthType,
+					pNegotiatedMCCipher, NULL, NULL);
 #ifdef WLAN_FEATURE_11W
 	/* If all the filter matches then finally checks for PMF capabilities */
 	if (fRSNMatch)
@@ -4119,8 +4035,7 @@ uint8_t csr_construct_rsn_ie(tpAniSirGlobal pMac, uint32_t sessionId,
 					MulticastCypher, AuthSuite,
 					&RSNCapabilities, &negAuthType, NULL,
 					gp_mgmt_cipher_suite,
-					&pProfile->mgmt_encryption_type,
-					session->is_adaptive_11r_connection);
+					&pProfile->mgmt_encryption_type);
 		if (!fRSNMatch)
 			break;
 
