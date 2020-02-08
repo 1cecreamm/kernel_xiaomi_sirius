@@ -1090,6 +1090,8 @@ int dwc3_core_pre_init(struct dwc3 *dwc)
 			ret = -ENOMEM;
 		}
 	}
+
+	return ret;
 }
 
 #define DWC3_ALIGN_MASK		(16 - 1)
