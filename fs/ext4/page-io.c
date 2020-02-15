@@ -471,7 +471,9 @@ int ext4_bio_write_page(struct ext4_io_submit *io,
 		if (io->io_bio)
 			gfp_flags = GFP_NOWAIT | __GFP_NOWARN;
 	retry_encrypt:
-		data_page = fscrypt_encrypt_page(inode, page, gfp_flags);
+	if (!fscrypt_using_hardware_encryption(inode))
+		data_page = fscrypt_encrypt_page(inode, page, PAGE_SIZE, 0,
+						page->index, gfp_flags);
 		if (IS_ERR(data_page)) {
 			ret = PTR_ERR(data_page);
 			if (ret == -ENOMEM &&
@@ -484,7 +486,7 @@ int ext4_bio_write_page(struct ext4_io_submit *io,
 				congestion_wait(BLK_RW_ASYNC, HZ/50);
 				goto retry_encrypt;
 			}
-			bounce_page = NULL;
+			data_page = NULL;
 			goto out;
 		}
 	}
